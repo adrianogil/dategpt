@@ -1,24 +1,77 @@
-#!/usr/bin/env python
+"""Tests for deterministic dategpt helpers."""
 
-"""Tests for `dategpt` package."""
+from datetime import datetime, timedelta, timezone
 
 import pytest
-
 
 from dategpt import dategpt
 
 
-@pytest.fixture
-def response():
-    """Sample pytest fixture.
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ("2026-06-13T09:30:00", datetime(2026, 6, 13, 9, 30)),
+        ("2026-06-13 09:30:00", datetime(2026, 6, 13, 9, 30)),
+        ("2026-06-13", datetime(2026, 6, 13)),
+        ("2026-06-13T09:30:00Z", datetime(2026, 6, 13, 9, 30, tzinfo=timezone.utc)),
+    ],
+)
+def test_parse_datetime_accepts_common_iso_formats(raw_value, expected):
+    assert dategpt.parse_datetime(raw_value) == expected
 
-    See more at: http://doc.pytest.org/en/latest/fixture.html
-    """
-    # import requests
-    # return requests.get('https://github.com/audreyr/cookiecutter-pypackage')
+
+@pytest.mark.parametrize("raw_value", ["", "tomorrow", "2026/06/13"])
+def test_parse_datetime_rejects_unsupported_formats(raw_value):
+    with pytest.raises(ValueError, match="Invalid date/time format"):
+        dategpt.parse_datetime(raw_value)
 
 
-def test_content(response):
-    """Sample pytest test function with the pytest fixture as an argument."""
-    # from bs4 import BeautifulSoup
-    # assert 'GitHub' in BeautifulSoup(response.content).title.string
+@pytest.mark.parametrize(
+    ("duration", "expected"),
+    [
+        ("P1D", timedelta(days=1)),
+        ("PT2H30M", timedelta(hours=2, minutes=30)),
+        ("P2W", timedelta(weeks=2)),
+        ("P1Y2M3DT4H5M6S", timedelta(days=428, hours=4, minutes=5, seconds=6)),
+    ],
+)
+def test_parse_iso8601_duration(duration, expected):
+    assert dategpt.parse_iso8601_duration(duration) == expected
+
+
+@pytest.mark.parametrize("duration", ["", "P", "PT", "4 days", "P1Q"])
+def test_parse_iso8601_duration_rejects_invalid_values(duration):
+    with pytest.raises(ValueError, match="Invalid ISO 8601 duration format"):
+        dategpt.parse_iso8601_duration(duration)
+
+
+def test_parse_date_function_returns_datetime():
+    result = dategpt.ParseDateLLMFunction().run_function(
+        None,
+        '{"date": "2026-06-13T09:30:00"}',
+    )
+
+    assert result == {"date": datetime(2026, 6, 13, 9, 30)}
+
+
+def test_parse_duration_function_returns_timedelta():
+    result = dategpt.ParseDurationLLMFunction().run_function(
+        None,
+        '{"duration": "PT45M"}',
+    )
+
+    assert result == {"duration": timedelta(minutes=45)}
+
+
+def test_parse_interval_function_returns_start_and_end_datetimes():
+    result = dategpt.ParseIntervalLLMFunction().run_function(
+        None,
+        '{"interval": {"start_date": "2026-06-13T09:30:00", "end_date": "2026-06-13T10:30:00"}}',
+    )
+
+    assert result == {
+        "interval": {
+            "start_date": datetime(2026, 6, 13, 9, 30),
+            "end_date": datetime(2026, 6, 13, 10, 30),
+        }
+    }

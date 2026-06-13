@@ -1,15 +1,15 @@
-"""Main module."""
+"""Date parsing helpers backed by OpenAI function calling."""
 
-from pydantic import BaseModel, Field
-from typing import Optional
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+import json
+import os
+import re
+from typing import Any
 
 from openai import OpenAI
-
-from datetime import timedelta, datetime
-
-import json
-import re
-import os
+from pydantic import BaseModel, Field
 
 
 def parse_date(date_str: str) -> dict:
@@ -17,67 +17,136 @@ def parse_date(date_str: str) -> dict:
 
     llm_runner = LLMRunner()
     return llm_runner.run_prompt(
-        "parse date given by the user: " + date_str + ". Consider that today is " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "."
+        "parse date given by the user: "
+        + date_str
+        + ". Consider that today is "
+        + datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        + "."
     )
 
+
 def get_llm_output(user_input: str, functions: list):
+    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("CHATGPT_SECRET_API_KEY")
+    if not api_key:
+        raise RuntimeError("Set OPENAI_API_KEY or CHATGPT_SECRET_API_KEY before calling parse_date().")
+
     client = OpenAI(
-        api_key=os.environ["CHATGPT_SECRET_API_KEY"],
+        api_key=api_key,
     )
     messages = [{"role": "user", "content": user_input}]
     completion = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=messages,
         functions=functions,
-        function_call="auto"
+        function_call="auto",
     )
     return completion
 
+
+def model_schema(model: type[BaseModel]) -> dict[str, Any]:
+    if hasattr(model, "model_json_schema"):
+        return model.model_json_schema()
+    return model.schema()
+
+
+def parse_datetime(value: str) -> datetime:
+    """Parse common ISO-like datetimes returned by the LLM."""
+
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        pass
+
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(normalized, fmt)
+        except ValueError:
+            continue
+
+    raise ValueError(f"Invalid date/time format: {value}")
+
+
 class IntervalModel(BaseModel):
-    start_date: str = Field(..., description="The start date and time of the interval in the format 'YYYY-MM-DDTHH:MM:SS'")
-    end_date: str = Field(..., description="The end date and time of the interval in the format 'YYYY-MM-DDTHH:MM:SS'")
+    start_date: str = Field(
+        ...,
+        description="The start date and time of the interval in the format 'YYYY-MM-DDTHH:MM:SS'",
+    )
+    end_date: str = Field(
+        ...,
+        description="The end date and time of the interval in the format 'YYYY-MM-DDTHH:MM:SS'",
+    )
+
 
 class ParseDate(BaseModel):
-    date: str = Field(..., description="The specific date and time for the event. The default option to return. Should follow the format 'YYYY-MM-DDTHH:MM:SS'.")
+    date: str = Field(
+        ...,
+        description=(
+            "The specific date and time for the event. The default option to return. "
+            "Should follow the format 'YYYY-MM-DDTHH:MM:SS'."
+        ),
+    )
+
 
 class ParseDuration(BaseModel):
-    duration: str = Field(..., description="The duration of the event or period. Only return it if it's specifically requested, e.g, in case user ask 'give the duration of the Carnival in Brazil this year.' or 'how long is the event?'. in the format 'PnYnMnDTnHnMnS'.")
+    duration: str = Field(
+        ...,
+        description=(
+            "The duration of the event or period. Only return it if specifically requested, "
+            "for example 'give the duration of Carnival in Brazil this year' or "
+            "'how long is the event?'. Use ISO 8601 duration format, e.g. 'PnYnMnDTnHnMnS'."
+        ),
+    )
+
 
 class ParseInterval(BaseModel):
-    interval: IntervalModel = Field(..., description="An interval consisting of a start and end date and time. Only return it if it's specifically requested, e.g., user ask 'give the period of the Carnival in Brazil this year.' or 'when does the event start and end?'.")
+    interval: IntervalModel = Field(
+        ...,
+        description=(
+            "An interval consisting of a start and end date and time. Only return it if "
+            "the user asks for a period, for example 'when does the event start and end?'."
+        ),
+    )
+
 
 def parse_iso8601_duration(duration: str) -> timedelta:
-    # Regular expression to match ISO 8601 duration format
+    duration = duration.strip()
+
+    week_match = re.fullmatch(r"P(?P<weeks>\d+)W", duration)
+    if week_match:
+        return timedelta(weeks=int(week_match.group("weeks")))
+
     pattern = re.compile(
-        r'P'  # duration starts with 'P'
-        r'(?:(?P<years>\d+)Y)?'  # number of years
-        r'(?:(?P<months>\d+)M)?'  # number of months
-        r'(?:(?P<days>\d+)D)?'  # number of days
-        r'(?:T'  # time part starts with 'T'
-        r'(?:(?P<thours>\d+)H)?'  # number of hours
-        r'(?:(?P<tminutes>\d+)M)?'  # number of minutes
-        r'(?:(?P<tseconds>\d+)S)?'  # number of seconds
-        r'(?:(?P<extra_days>\d+)D)?'  # handling cases like PT4D
-        r')?'  # end of time part
+        r"^P"
+        r"(?:(?P<years>\d+)Y)?"
+        r"(?:(?P<months>\d+)M)?"
+        r"(?:(?P<days>\d+)D)?"
+        r"(?:T"
+        r"(?:(?P<hours>\d+)H)?"
+        r"(?:(?P<minutes>\d+)M)?"
+        r"(?:(?P<seconds>\d+)S)?"
+        r")?$"
     )
 
     match = pattern.fullmatch(duration)
     if not match:
         raise ValueError(f"Invalid ISO 8601 duration format: {duration}")
 
-    # Extract the matched groups and convert them to integers, defaulting to 0 if not present
-    years = int(match.group('years') or 0)
-    months = int(match.group('months') or 0)
-    days = int(match.group('days') or 0)
-    hours = int(match.group('thours') or 0)
-    minutes = int(match.group('tminutes') or 0)
-    seconds = int(match.group('tseconds') or 0)
-    extra_days = int(match.group('extra_days') or 0)
+    parts = {name: int(value or 0) for name, value in match.groupdict().items()}
+    if not any(parts.values()):
+        raise ValueError(f"Invalid ISO 8601 duration format: {duration}")
 
-    # Note: `timedelta` does not support years and months directly.
-    # You may need to handle these separately if needed.
-    total_days = days + extra_days + years * 365 + months * 30  # approximate conversion
-    return timedelta(days=total_days, hours=hours, minutes=minutes, seconds=seconds)
+    # timedelta does not model calendar years/months; keep the previous approximate policy.
+    total_days = parts["days"] + parts["years"] * 365 + parts["months"] * 30
+    return timedelta(
+        days=total_days,
+        hours=parts["hours"],
+        minutes=parts["minutes"],
+        seconds=parts["seconds"],
+    )
 
 
 class ParseDateLLMFunction:
@@ -89,15 +158,13 @@ class ParseDateLLMFunction:
         return {
             "name": self.get_function_name(),
             "description": "Parses a date string and returns a specific date. Should not be used when the user asks for a duration or interval, only when the user asks for a specific date and time",
-            "parameters": ParseDate.schema(),
+            "parameters": model_schema(ParseDate),
         }
 
     def run_function(self, llmassistant, arguments):
         parse_date_data = ParseDate(**json.loads(arguments))
 
-        return {
-            "date": datetime.strptime(parse_date_data.date, "%Y-%m-%dT%H:%M:%S")
-        }
+        return {"date": parse_datetime(parse_date_data.date)}
 
 
 class ParseDurationLLMFunction:
@@ -108,18 +175,16 @@ class ParseDurationLLMFunction:
         return {
             "name": self.get_function_name(),
             "description": "Parses a date string and returns the duration. It should be used when the users asks for a duration. Not be used for intervals or specific dates.",
-            "parameters": ParseDuration.schema(),
+            "parameters": model_schema(ParseDuration),
         }
 
     def run_function(self, llmassistant, arguments):
-        print(arguments)
         parse_duration_data = ParseDuration(**json.loads(arguments))
 
         duration_str = parse_duration_data.duration
 
-        return {
-            "duration": parse_iso8601_duration(duration_str)
-        }
+        return {"duration": parse_iso8601_duration(duration_str)}
+
 
 class ParseIntervalLLMFunction:
     def get_function_name(self):
@@ -128,21 +193,23 @@ class ParseIntervalLLMFunction:
     def get_function_metadata(self):
         return {
             "name": self.get_function_name(),
-            "description": "Parses a date string and returns a interval. It should be use then the users asks for the start and end date of some event",
-            "parameters": ParseInterval.schema(),
+            "description": (
+                "Parses a date string and returns an interval. It should be used when "
+                "the user asks for the start and end date of an event."
+            ),
+            "parameters": model_schema(ParseInterval),
         }
 
     def run_function(self, llmassistant, arguments):
-        print(arguments)
         parse_interval_data = ParseInterval(**json.loads(arguments))
 
-        start_date = datetime.strptime(parse_interval_data.interval.start_date, "%Y-%m-%dT%H:%M:%S")
-        end_date = datetime.strptime(parse_interval_data.interval.end_date, "%Y-%m-%dT%H:%M:%S")
+        start_date = parse_datetime(parse_interval_data.interval.start_date)
+        end_date = parse_datetime(parse_interval_data.interval.end_date)
 
         return {
             "interval": {
                 "start_date": start_date,
-                "end_date": end_date
+                "end_date": end_date,
             }
         }
 
@@ -152,7 +219,7 @@ class LLMRunner:
         self.functions = [
             ParseIntervalLLMFunction(),
             ParseDurationLLMFunction(),
-            ParseDateLLMFunction()
+            ParseDateLLMFunction(),
         ]
 
     def get_functions(self):
@@ -165,12 +232,11 @@ class LLMRunner:
         chatgpt_functions = self.get_functions()
         self.last_completion = get_llm_output(user_input=prompt, functions=chatgpt_functions)
         if self.last_completion.choices[0].message.function_call is None:
-            print(self.last_completion.choices[0].message.content)
-        else:
-            target_function_call = self.last_completion.choices[0].message.function_call.name
-            for function in self.functions:
-                if function.get_function_name() == target_function_call:
-                    print("Running function: " + str(target_function_call))
-                    return function.run_function(self, self.last_completion.choices[0].message.function_call.arguments)
-            else:
-                print("Function not found: " + str(target_function_call))
+            raise RuntimeError("The model did not return a structured date function call.")
+
+        target_function_call = self.last_completion.choices[0].message.function_call.name
+        for function in self.functions:
+            if function.get_function_name() == target_function_call:
+                return function.run_function(self, self.last_completion.choices[0].message.function_call.arguments)
+
+        raise RuntimeError(f"Unknown date function returned by model: {target_function_call}")

@@ -20,7 +20,7 @@ dategpt
 
 
 
-Python library to help parser dates using OpenAI API
+Python library to parse natural-language date, duration, and interval requests using the OpenAI API.
 
 
 * Free software: MIT license
@@ -30,7 +30,26 @@ Python library to help parser dates using OpenAI API
 Features
 --------
 
-* TODO
+* Parse a specific date/time into a ``datetime``.
+* Parse a duration into a ``timedelta``.
+* Parse an interval into start/end ``datetime`` values.
+* Expose deterministic helpers for ISO-like date/time and ISO 8601 duration values.
+
+Usage
+-----
+
+Set an API key before calling the LLM-backed parser::
+
+    export OPENAI_API_KEY="..."
+
+Then call ``parse_date``::
+
+    from dategpt.dategpt import parse_date
+
+    result = parse_date("tomorrow at 9am")
+    print(result["date"])
+
+For compatibility with older local scripts, ``CHATGPT_SECRET_API_KEY`` is also accepted.
 
 Credits
 -------
