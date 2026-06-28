@@ -1,14 +1,17 @@
 """Console script for dategpt."""
-from . import dategpt
+from __future__ import annotations
 
 import typer
 from rich.console import Console
 
+from . import dategpt
+
 app = typer.Typer()
 console = Console()
 
+
 @app.command()
-def main(date_string: str):
+def main(date_string: str) -> None:
     """Parses a date manipulation string and outputs the resulting date.
 
     Args:
@@ -26,5 +29,12 @@ def main(date_string: str):
     except Exception as e:
         console.print(f"Error parsing date string: {e}")
 
-if __name__ == "__main__":
+
+def cli() -> None:
+    """Run the Typer command line application."""
+
     app()
+
+
+if __name__ == "__main__":
+    cli()

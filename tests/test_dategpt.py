@@ -1,6 +1,7 @@
 """Tests for deterministic dategpt helpers."""
 
 from datetime import datetime, timedelta, timezone
+import tomllib
 
 import pytest
 
@@ -75,3 +76,12 @@ def test_parse_interval_function_returns_start_and_end_datetimes():
             "end_date": datetime(2026, 6, 13, 10, 30),
         }
     }
+
+
+def test_project_scripts_use_setuptools_entry_point():
+    with open("pyproject.toml", "rb") as pyproject_file:
+        pyproject = tomllib.load(pyproject_file)
+
+    assert pyproject["build-system"]["build-backend"] == "setuptools.build_meta"
+    assert pyproject["project"]["scripts"]["dategpt"] == "dategpt.cli:cli"
+    assert "poetry" not in pyproject.get("tool", {})

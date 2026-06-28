@@ -51,6 +51,10 @@ Then call ``parse_date``::
 
 For compatibility with older local scripts, ``CHATGPT_SECRET_API_KEY`` is also accepted.
 
+The package also installs a small CLI command::
+
+    dategpt "tomorrow at 9am"
+
 Credits
 -------
 

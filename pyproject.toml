@@ -38,14 +38,14 @@ bugs = "https://github.com/adrianogil/dategpt/issues"
 changelog = "https://github.com/adrianogil/dategpt/blob/master/changelog.md"
 homepage = "https://github.com/adrianogil/dategpt"
 
+[project.scripts]
+dategpt = "dategpt.cli:cli"
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
 "*" = ["*.*"]
-
-[tool.poetry.scripts]
-dategpt = 'dategpt.cli:main'
 
 
 # Mypy
