@@ -45,8 +45,9 @@ Set an API key before calling the LLM-backed parser::
 Then call ``parse_date``::
 
     from dategpt.dategpt import parse_date
+    from datetime import datetime
 
-    result = parse_date("tomorrow at 9am")
+    result = parse_date("tomorrow at 9am", reference_datetime=datetime(2026, 7, 10, 12))
     print(result["date"])
 
 For compatibility with older local scripts, ``CHATGPT_SECRET_API_KEY`` is also accepted.
@@ -54,6 +55,10 @@ For compatibility with older local scripts, ``CHATGPT_SECRET_API_KEY`` is also a
 The package also installs a small CLI command::
 
     dategpt "tomorrow at 9am"
+
+Relative date parsing can be made deterministic by passing a reference datetime::
+
+    dategpt "tomorrow at 9am" --reference-datetime 2026-07-10T12:00:00
 
 Credits
 -------

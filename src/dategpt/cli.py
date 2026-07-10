@@ -11,14 +11,23 @@ console = Console()
 
 
 @app.command()
-def main(date_string: str) -> None:
+def main(
+    date_string: str,
+    reference_datetime: str | None = typer.Option(
+        None,
+        "--reference-datetime",
+        "-r",
+        help="Reference datetime for relative date parsing, e.g. 2026-07-10T09:30:00.",
+    ),
+) -> None:
     """Parses a date manipulation string and outputs the resulting date.
 
     Args:
         date_string (str): The date manipulation string to parse, e.g., "today + 1 days".
     """
     try:
-        result_date = dategpt.parse_date(date_string)
+        reference = dategpt.parse_datetime(reference_datetime) if reference_datetime else None
+        result_date = dategpt.parse_date(date_string, reference_datetime=reference)
         if "date" in result_date:
             console.print(result_date["date"].strftime("%Y-%m-%d %H:%M:%S"))
         elif "duration" in result_date:

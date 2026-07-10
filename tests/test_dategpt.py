@@ -55,6 +55,36 @@ def test_parse_date_function_returns_datetime():
     assert result == {"date": datetime(2026, 6, 13, 9, 30)}
 
 
+def test_build_parse_date_prompt_uses_reference_datetime():
+    prompt = dategpt.build_parse_date_prompt(
+        "tomorrow at 9am",
+        datetime(2026, 7, 10, 14, 30, 5),
+    )
+
+    assert prompt == (
+        "parse date given by the user: tomorrow at 9am. "
+        "Consider that today is 2026-07-10 14:30:05."
+    )
+
+
+def test_parse_date_accepts_reference_datetime(monkeypatch):
+    class FakeLLMRunner:
+        def run_prompt(self, prompt):
+            self.prompt = prompt
+            return {"date": datetime(2026, 7, 11, 9)}
+
+    fake_runner = FakeLLMRunner()
+    monkeypatch.setattr(dategpt, "LLMRunner", lambda: fake_runner)
+
+    result = dategpt.parse_date(
+        "tomorrow at 9am",
+        reference_datetime=datetime(2026, 7, 10, 14, 30, 5),
+    )
+
+    assert result == {"date": datetime(2026, 7, 11, 9)}
+    assert "Consider that today is 2026-07-10 14:30:05." in fake_runner.prompt
+
+
 def test_parse_duration_function_returns_timedelta():
     result = dategpt.ParseDurationLLMFunction().run_function(
         None,

@@ -12,17 +12,29 @@ from openai import OpenAI
 from pydantic import BaseModel, Field
 
 
-def parse_date(date_str: str) -> dict:
-    """Parses a date string and returns a dict with datetime object."""
+def build_parse_date_prompt(date_str: str, reference_datetime: datetime) -> str:
+    """Build the LLM prompt used to parse natural-language date requests."""
 
-    llm_runner = LLMRunner()
-    return llm_runner.run_prompt(
+    return (
         "parse date given by the user: "
         + date_str
         + ". Consider that today is "
-        + datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        + reference_datetime.strftime("%Y-%m-%d %H:%M:%S")
         + "."
     )
+
+
+def parse_date(date_str: str, reference_datetime: datetime | None = None) -> dict:
+    """Parse a date string relative to a reference datetime.
+
+    If no reference datetime is supplied, the current local datetime is used.
+    """
+
+    llm_runner = LLMRunner()
+    if reference_datetime is None:
+        reference_datetime = datetime.now()
+
+    return llm_runner.run_prompt(build_parse_date_prompt(date_str, reference_datetime))
 
 
 def get_llm_output(user_input: str, functions: list):
