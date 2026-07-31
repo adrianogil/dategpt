@@ -4,8 +4,10 @@ from datetime import datetime, timedelta, timezone
 import tomllib
 
 import pytest
+from typer.testing import CliRunner
 
 from dategpt import dategpt
+from dategpt import cli as cli_module
 
 
 @pytest.mark.parametrize(
@@ -115,3 +117,15 @@ def test_project_scripts_use_setuptools_entry_point():
     assert pyproject["build-system"]["build-backend"] == "setuptools.build_meta"
     assert pyproject["project"]["scripts"]["dategpt"] == "dategpt.cli:cli"
     assert "poetry" not in pyproject.get("tool", {})
+
+
+def test_cli_returns_nonzero_status_when_parsing_fails(monkeypatch):
+    def fail_to_parse(*args, **kwargs):
+        raise RuntimeError("API unavailable")
+
+    monkeypatch.setattr(cli_module.dategpt, "parse_date", fail_to_parse)
+
+    result = CliRunner().invoke(cli_module.app, ["tomorrow"])
+
+    assert result.exit_code == 1
+    assert "Error parsing date string: API unavailable" in result.stderr

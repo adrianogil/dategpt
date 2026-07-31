@@ -36,7 +36,8 @@ def main(
             console.print(f"Start date: {result_date['interval']['start_date'].strftime('%Y-%m-%d %H:%M:%S')}")
             console.print(f"End date: {result_date['interval']['end_date'].strftime('%Y-%m-%d %H:%M:%S')}")
     except Exception as e:
-        console.print(f"Error parsing date string: {e}")
+        typer.echo(f"Error parsing date string: {e}", err=True)
+        raise typer.Exit(code=1) from e
 
 
 def cli() -> None:
