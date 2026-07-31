@@ -29,12 +29,18 @@ def main(
         reference = dategpt.parse_datetime(reference_datetime) if reference_datetime else None
         result_date = dategpt.parse_date(date_string, reference_datetime=reference)
         if "date" in result_date:
-            console.print(result_date["date"].strftime("%Y-%m-%d %H:%M:%S"))
+            console.print(result_date["date"].isoformat(sep=" ", timespec="seconds"))
         elif "duration" in result_date:
             console.print(result_date["duration"])
         elif "interval" in result_date:
-            console.print(f"Start date: {result_date['interval']['start_date'].strftime('%Y-%m-%d %H:%M:%S')}")
-            console.print(f"End date: {result_date['interval']['end_date'].strftime('%Y-%m-%d %H:%M:%S')}")
+            console.print(
+                "Start date: "
+                + result_date["interval"]["start_date"].isoformat(sep=" ", timespec="seconds")
+            )
+            console.print(
+                "End date: "
+                + result_date["interval"]["end_date"].isoformat(sep=" ", timespec="seconds")
+            )
     except Exception as e:
         typer.echo(f"Error parsing date string: {e}", err=True)
         raise typer.Exit(code=1) from e

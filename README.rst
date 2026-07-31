@@ -47,7 +47,8 @@ Then call ``parse_date``::
     from dategpt.dategpt import parse_date
     from datetime import datetime
 
-    result = parse_date("tomorrow at 9am", reference_datetime=datetime(2026, 7, 10, 12))
+    reference = datetime.fromisoformat("2026-07-10T12:00:00-04:00")
+    result = parse_date("tomorrow at 9am", reference_datetime=reference)
     print(result["date"])
 
 For compatibility with older local scripts, ``CHATGPT_SECRET_API_KEY`` is also accepted.
@@ -59,6 +60,9 @@ The package also installs a small CLI command::
 Relative date parsing can be made deterministic by passing a reference datetime::
 
     dategpt "tomorrow at 9am" --reference-datetime 2026-07-10T12:00:00
+
+Reference datetimes and parsed results preserve ISO 8601 UTC offsets. A naive
+reference datetime is interpreted in the computer's local timezone.
 
 Credits
 -------

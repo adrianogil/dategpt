@@ -60,31 +60,63 @@ def test_parse_date_function_returns_datetime():
 def test_build_parse_date_prompt_uses_reference_datetime():
     prompt = dategpt.build_parse_date_prompt(
         "tomorrow at 9am",
-        datetime(2026, 7, 10, 14, 30, 5),
+        datetime(2026, 7, 10, 14, 30, 5, tzinfo=timezone(timedelta(hours=-4))),
     )
 
     assert prompt == (
         "parse date given by the user: tomorrow at 9am. "
-        "Consider that today is 2026-07-10 14:30:05."
+        "Consider that today is 2026-07-10T14:30:05-04:00."
     )
 
 
 def test_parse_date_accepts_reference_datetime(monkeypatch):
     class FakeLLMRunner:
+        def __init__(self, reference_datetime):
+            self.reference_datetime = reference_datetime
+
         def run_prompt(self, prompt):
             self.prompt = prompt
-            return {"date": datetime(2026, 7, 11, 9)}
+            return {"date": datetime(2026, 7, 11, 9, tzinfo=self.reference_datetime.tzinfo)}
 
-    fake_runner = FakeLLMRunner()
-    monkeypatch.setattr(dategpt, "LLMRunner", lambda: fake_runner)
+    monkeypatch.setattr(dategpt, "LLMRunner", FakeLLMRunner)
+    reference = datetime(2026, 7, 10, 14, 30, 5, tzinfo=timezone(timedelta(hours=-4)))
 
     result = dategpt.parse_date(
         "tomorrow at 9am",
-        reference_datetime=datetime(2026, 7, 10, 14, 30, 5),
+        reference_datetime=reference,
     )
 
-    assert result == {"date": datetime(2026, 7, 11, 9)}
-    assert "Consider that today is 2026-07-10 14:30:05." in fake_runner.prompt
+    assert result == {"date": datetime(2026, 7, 11, 9, tzinfo=reference.tzinfo)}
+
+
+def test_parse_date_normalizes_naive_reference_to_local_timezone(monkeypatch):
+    captured = {}
+
+    class FakeLLMRunner:
+        def __init__(self, reference_datetime):
+            captured["reference_datetime"] = reference_datetime
+
+        def run_prompt(self, prompt):
+            return {"date": captured["reference_datetime"]}
+
+    monkeypatch.setattr(dategpt, "LLMRunner", FakeLLMRunner)
+
+    result = dategpt.parse_date("now", reference_datetime=datetime(2026, 7, 10, 14, 30, 5))
+
+    assert result["date"].utcoffset() is not None
+    assert "2026-07-10T14:30:05" in captured["reference_datetime"].isoformat()
+
+
+def test_date_function_applies_reference_timezone_to_naive_model_output():
+    reference = datetime(2026, 7, 10, 14, 30, tzinfo=timezone(timedelta(hours=-4)))
+    runner = type("Runner", (), {"reference_datetime": reference})()
+
+    result = dategpt.ParseDateLLMFunction().run_function(
+        runner,
+        '{"date": "2026-07-11T09:00:00"}',
+    )
+
+    assert result == {"date": datetime(2026, 7, 11, 9, tzinfo=reference.tzinfo)}
 
 
 def test_parse_duration_function_returns_timedelta():
@@ -129,3 +161,13 @@ def test_cli_returns_nonzero_status_when_parsing_fails(monkeypatch):
 
     assert result.exit_code == 1
     assert "Error parsing date string: API unavailable" in result.stderr
+
+
+def test_cli_preserves_timezone_offset_in_date_output(monkeypatch):
+    parsed_date = datetime(2026, 7, 11, 9, tzinfo=timezone(timedelta(hours=-4)))
+    monkeypatch.setattr(cli_module.dategpt, "parse_date", lambda *args, **kwargs: {"date": parsed_date})
+
+    result = CliRunner().invoke(cli_module.app, ["tomorrow at 9am"])
+
+    assert result.exit_code == 0
+    assert "2026-07-11 09:00:00-04:00" in result.stdout

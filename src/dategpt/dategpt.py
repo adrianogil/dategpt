@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 import json
 import os
 import re
@@ -19,9 +19,19 @@ def build_parse_date_prompt(date_str: str, reference_datetime: datetime) -> str:
         "parse date given by the user: "
         + date_str
         + ". Consider that today is "
-        + reference_datetime.strftime("%Y-%m-%d %H:%M:%S")
+        + reference_datetime.isoformat(timespec="seconds")
         + "."
     )
+
+
+def normalize_reference_datetime(reference_datetime: datetime | None) -> datetime:
+    """Return an aware reference datetime, using the local zone when omitted or naive."""
+
+    if reference_datetime is None:
+        return datetime.now().astimezone()
+    if reference_datetime.tzinfo is None or reference_datetime.utcoffset() is None:
+        return reference_datetime.astimezone()
+    return reference_datetime
 
 
 def parse_date(date_str: str, reference_datetime: datetime | None = None) -> dict:
@@ -30,9 +40,8 @@ def parse_date(date_str: str, reference_datetime: datetime | None = None) -> dic
     If no reference datetime is supplied, the current local datetime is used.
     """
 
-    llm_runner = LLMRunner()
-    if reference_datetime is None:
-        reference_datetime = datetime.now()
+    reference_datetime = normalize_reference_datetime(reference_datetime)
+    llm_runner = LLMRunner(reference_datetime=reference_datetime)
 
     return llm_runner.run_prompt(build_parse_date_prompt(date_str, reference_datetime))
 
@@ -61,7 +70,7 @@ def model_schema(model: type[BaseModel]) -> dict[str, Any]:
     return model.schema()
 
 
-def parse_datetime(value: str) -> datetime:
+def parse_datetime(value: str, default_timezone: tzinfo | None = None) -> datetime:
     """Parse common ISO-like datetimes returned by the LLM."""
 
     normalized = value.strip()
@@ -69,13 +78,20 @@ def parse_datetime(value: str) -> datetime:
         normalized = normalized[:-1] + "+00:00"
 
     try:
-        return datetime.fromisoformat(normalized)
+        parsed = datetime.fromisoformat(normalized)
     except ValueError:
         pass
+    else:
+        if parsed.tzinfo is None and default_timezone is not None:
+            return parsed.replace(tzinfo=default_timezone)
+        return parsed
 
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
         try:
-            return datetime.strptime(normalized, fmt)
+            parsed = datetime.strptime(normalized, fmt)
+            if default_timezone is not None:
+                parsed = parsed.replace(tzinfo=default_timezone)
+            return parsed
         except ValueError:
             continue
 
@@ -85,11 +101,17 @@ def parse_datetime(value: str) -> datetime:
 class IntervalModel(BaseModel):
     start_date: str = Field(
         ...,
-        description="The start date and time of the interval in the format 'YYYY-MM-DDTHH:MM:SS'",
+        description=(
+            "The interval start as an ISO 8601 datetime with UTC offset, "
+            "for example '2026-07-10T09:30:00-04:00'."
+        ),
     )
     end_date: str = Field(
         ...,
-        description="The end date and time of the interval in the format 'YYYY-MM-DDTHH:MM:SS'",
+        description=(
+            "The interval end as an ISO 8601 datetime with UTC offset, "
+            "for example '2026-07-10T10:30:00-04:00'."
+        ),
     )
 
 
@@ -98,7 +120,8 @@ class ParseDate(BaseModel):
         ...,
         description=(
             "The specific date and time for the event. The default option to return. "
-            "Should follow the format 'YYYY-MM-DDTHH:MM:SS'."
+            "Return an ISO 8601 datetime with UTC offset, for example "
+            "'2026-07-10T09:30:00-04:00'."
         ),
     )
 
@@ -175,8 +198,9 @@ class ParseDateLLMFunction:
 
     def run_function(self, llmassistant, arguments):
         parse_date_data = ParseDate(**json.loads(arguments))
+        default_timezone = getattr(getattr(llmassistant, "reference_datetime", None), "tzinfo", None)
 
-        return {"date": parse_datetime(parse_date_data.date)}
+        return {"date": parse_datetime(parse_date_data.date, default_timezone=default_timezone)}
 
 
 class ParseDurationLLMFunction:
@@ -214,9 +238,16 @@ class ParseIntervalLLMFunction:
 
     def run_function(self, llmassistant, arguments):
         parse_interval_data = ParseInterval(**json.loads(arguments))
+        default_timezone = getattr(getattr(llmassistant, "reference_datetime", None), "tzinfo", None)
 
-        start_date = parse_datetime(parse_interval_data.interval.start_date)
-        end_date = parse_datetime(parse_interval_data.interval.end_date)
+        start_date = parse_datetime(
+            parse_interval_data.interval.start_date,
+            default_timezone=default_timezone,
+        )
+        end_date = parse_datetime(
+            parse_interval_data.interval.end_date,
+            default_timezone=default_timezone,
+        )
 
         return {
             "interval": {
@@ -227,7 +258,8 @@ class ParseIntervalLLMFunction:
 
 
 class LLMRunner:
-    def __init__(self):
+    def __init__(self, reference_datetime: datetime):
+        self.reference_datetime = reference_datetime
         self.functions = [
             ParseIntervalLLMFunction(),
             ParseDurationLLMFunction(),
