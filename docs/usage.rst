@@ -21,7 +21,8 @@ the reference datetime's timezone. Naive reference datetimes use the computer's
 local timezone.
 
 ``parse_date`` requires either ``OPENAI_API_KEY`` or ``CHATGPT_SECRET_API_KEY`` in
-the environment. It returns one of these dictionary shapes:
+the environment. Internally it uses the OpenAI Responses API with a Pydantic
+Structured Outputs schema. It returns one of these dictionary shapes:
 
 * ``{"date": datetime}``
 * ``{"duration": timedelta}``

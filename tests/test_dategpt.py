@@ -48,13 +48,17 @@ def test_parse_iso8601_duration_rejects_invalid_values(duration):
         dategpt.parse_iso8601_duration(duration)
 
 
-def test_parse_date_function_returns_datetime():
-    result = dategpt.ParseDateLLMFunction().run_function(
-        None,
-        '{"date": "2026-06-13T09:30:00"}',
+def test_structured_date_response_returns_datetime():
+    reference = datetime(2026, 6, 13, 8, tzinfo=timezone.utc)
+    result = dategpt.parsed_response_to_result(
+        dategpt.DateParseResponse(
+            result_type="date",
+            date="2026-06-13T09:30:00Z",
+        ),
+        reference,
     )
 
-    assert result == {"date": datetime(2026, 6, 13, 9, 30)}
+    assert result == {"date": datetime(2026, 6, 13, 9, 30, tzinfo=timezone.utc)}
 
 
 def test_build_parse_date_prompt_uses_reference_datetime():
@@ -63,22 +67,26 @@ def test_build_parse_date_prompt_uses_reference_datetime():
         datetime(2026, 7, 10, 14, 30, 5, tzinfo=timezone(timedelta(hours=-4))),
     )
 
-    assert prompt == (
-        "parse date given by the user: tomorrow at 9am. "
-        "Consider that today is 2026-07-10T14:30:05-04:00."
+    assert prompt == "\n".join(
+        (
+            "Reference datetime: 2026-07-10T14:30:05-04:00",
+            "Date expression:",
+            "tomorrow at 9am",
+        )
     )
 
 
 def test_parse_date_accepts_reference_datetime(monkeypatch):
-    class FakeLLMRunner:
-        def __init__(self, reference_datetime):
-            self.reference_datetime = reference_datetime
+    captured = {}
 
-        def run_prompt(self, prompt):
-            self.prompt = prompt
-            return {"date": datetime(2026, 7, 11, 9, tzinfo=self.reference_datetime.tzinfo)}
+    def fake_get_llm_output(user_input, client=None):
+        captured["input"] = user_input
+        return dategpt.DateParseResponse(
+            result_type="date",
+            date="2026-07-11T09:00:00-04:00",
+        )
 
-    monkeypatch.setattr(dategpt, "LLMRunner", FakeLLMRunner)
+    monkeypatch.setattr(dategpt, "get_llm_output", fake_get_llm_output)
     reference = datetime(2026, 7, 10, 14, 30, 5, tzinfo=timezone(timedelta(hours=-4)))
 
     result = dategpt.parse_date(
@@ -87,57 +95,69 @@ def test_parse_date_accepts_reference_datetime(monkeypatch):
     )
 
     assert result == {"date": datetime(2026, 7, 11, 9, tzinfo=reference.tzinfo)}
+    assert "Reference datetime: 2026-07-10T14:30:05-04:00" in captured["input"]
 
 
 def test_parse_date_normalizes_naive_reference_to_local_timezone(monkeypatch):
     captured = {}
 
-    class FakeLLMRunner:
-        def __init__(self, reference_datetime):
-            captured["reference_datetime"] = reference_datetime
+    def fake_get_llm_output(user_input, client=None):
+        captured["input"] = user_input
+        return dategpt.DateParseResponse(
+            result_type="date",
+            date="2026-07-10T14:30:05",
+        )
 
-        def run_prompt(self, prompt):
-            return {"date": captured["reference_datetime"]}
-
-    monkeypatch.setattr(dategpt, "LLMRunner", FakeLLMRunner)
+    monkeypatch.setattr(dategpt, "get_llm_output", fake_get_llm_output)
 
     result = dategpt.parse_date("now", reference_datetime=datetime(2026, 7, 10, 14, 30, 5))
 
     assert result["date"].utcoffset() is not None
-    assert "2026-07-10T14:30:05" in captured["reference_datetime"].isoformat()
+    assert "Reference datetime: 2026-07-10T14:30:05" in captured["input"]
 
 
-def test_date_function_applies_reference_timezone_to_naive_model_output():
+def test_structured_date_response_applies_reference_timezone_to_naive_model_output():
     reference = datetime(2026, 7, 10, 14, 30, tzinfo=timezone(timedelta(hours=-4)))
-    runner = type("Runner", (), {"reference_datetime": reference})()
-
-    result = dategpt.ParseDateLLMFunction().run_function(
-        runner,
-        '{"date": "2026-07-11T09:00:00"}',
+    result = dategpt.parsed_response_to_result(
+        dategpt.DateParseResponse(
+            result_type="date",
+            date="2026-07-11T09:00:00",
+        ),
+        reference,
     )
 
     assert result == {"date": datetime(2026, 7, 11, 9, tzinfo=reference.tzinfo)}
 
 
-def test_parse_duration_function_returns_timedelta():
-    result = dategpt.ParseDurationLLMFunction().run_function(
-        None,
-        '{"duration": "PT45M"}',
+def test_structured_duration_response_returns_timedelta():
+    result = dategpt.parsed_response_to_result(
+        dategpt.DateParseResponse(
+            result_type="duration",
+            duration="PT45M",
+        ),
+        datetime(2026, 6, 13, tzinfo=timezone.utc),
     )
 
     assert result == {"duration": timedelta(minutes=45)}
 
 
-def test_parse_interval_function_returns_start_and_end_datetimes():
-    result = dategpt.ParseIntervalLLMFunction().run_function(
-        None,
-        '{"interval": {"start_date": "2026-06-13T09:30:00", "end_date": "2026-06-13T10:30:00"}}',
+def test_structured_interval_response_returns_start_and_end_datetimes():
+    reference = datetime(2026, 6, 13, tzinfo=timezone.utc)
+    result = dategpt.parsed_response_to_result(
+        dategpt.DateParseResponse(
+            result_type="interval",
+            interval=dategpt.IntervalModel(
+                start_date="2026-06-13T09:30:00",
+                end_date="2026-06-13T10:30:00",
+            ),
+        ),
+        reference,
     )
 
     assert result == {
         "interval": {
-            "start_date": datetime(2026, 6, 13, 9, 30),
-            "end_date": datetime(2026, 6, 13, 10, 30),
+            "start_date": datetime(2026, 6, 13, 9, 30, tzinfo=timezone.utc),
+            "end_date": datetime(2026, 6, 13, 10, 30, tzinfo=timezone.utc),
         }
     }
 

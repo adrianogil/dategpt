@@ -34,6 +34,7 @@ Features
 * Parse a duration into a ``timedelta``.
 * Parse an interval into start/end ``datetime`` values.
 * Expose deterministic helpers for ISO-like date/time and ISO 8601 duration values.
+* Validate model responses with Pydantic through the OpenAI Responses API Structured Outputs interface.
 
 Usage
 -----
