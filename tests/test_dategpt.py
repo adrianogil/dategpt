@@ -1,13 +1,66 @@
 """Tests for deterministic dategpt helpers."""
 
 from datetime import datetime, timedelta, timezone
+import json
 import tomllib
 
+import httpx
+from openai import AuthenticationError, DefaultHttpxClient, OpenAI
+from pydantic import ValidationError
 import pytest
 from typer.testing import CliRunner
 
 from dategpt import dategpt
 from dategpt import cli as cli_module
+
+
+def openai_response_payload(content):
+    """Build a representative successful /v1/responses payload for SDK boundary tests."""
+
+    return {
+        "id": "resp_test",
+        "object": "response",
+        "created_at": 1_750_000_000,
+        "status": "completed",
+        "error": None,
+        "incomplete_details": None,
+        "instructions": None,
+        "max_output_tokens": None,
+        "model": "gpt-4o-mini-2024-07-18",
+        "output": [
+            {
+                "id": "msg_test",
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": content,
+            }
+        ],
+        "parallel_tool_calls": True,
+        "previous_response_id": None,
+        "reasoning": {"effort": None, "summary": None},
+        "store": False,
+        "temperature": 1.0,
+        "text": {"format": {"type": "text"}},
+        "tool_choice": "auto",
+        "tools": [],
+        "top_p": 1.0,
+        "truncation": "disabled",
+        "usage": {
+            "input_tokens": 10,
+            "input_tokens_details": {"cached_tokens": 0},
+            "output_tokens": 10,
+            "output_tokens_details": {"reasoning_tokens": 0},
+            "total_tokens": 20,
+        },
+    }
+
+
+def mock_openai_client(handler):
+    return OpenAI(
+        api_key="test-key",
+        http_client=DefaultHttpxClient(transport=httpx.MockTransport(handler)),
+    )
 
 
 @pytest.mark.parametrize(
@@ -191,3 +244,102 @@ def test_cli_preserves_timezone_offset_in_date_output(monkeypatch):
 
     assert result.exit_code == 0
     assert "2026-07-11 09:00:00-04:00" in result.stdout
+
+
+def test_openai_responses_boundary_sends_schema_and_parses_result():
+    captured = {}
+    model_output = json.dumps(
+        {
+            "result_type": "date",
+            "date": "2026-07-11T09:00:00-04:00",
+            "duration": None,
+            "interval": None,
+        }
+    )
+
+    def handler(request):
+        captured["method"] = request.method
+        captured["path"] = request.url.path
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json=openai_response_payload(
+                [
+                    {
+                        "type": "output_text",
+                        "text": model_output,
+                        "annotations": [],
+                        "logprobs": [],
+                    }
+                ]
+            ),
+        )
+
+    reference = datetime(2026, 7, 10, 14, 30, tzinfo=timezone(timedelta(hours=-4)))
+    result = dategpt.parse_date(
+        "tomorrow at 9am",
+        reference_datetime=reference,
+        client=mock_openai_client(handler),
+    )
+
+    assert result == {"date": datetime(2026, 7, 11, 9, tzinfo=reference.tzinfo)}
+    assert captured["method"] == "POST"
+    assert captured["path"] == "/v1/responses"
+    assert captured["body"]["model"] == "gpt-4o-mini"
+    assert captured["body"]["store"] is False
+    assert "Reference datetime: 2026-07-10T14:30:00-04:00" in captured["body"]["input"]
+    response_format = captured["body"]["text"]["format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["strict"] is True
+    assert response_format["schema"]["additionalProperties"] is False
+
+
+def test_openai_responses_boundary_surfaces_refusal():
+    def handler(request):
+        return httpx.Response(
+            200,
+            json=openai_response_payload(
+                [{"type": "refusal", "refusal": "I cannot parse that request."}]
+            ),
+        )
+
+    with pytest.raises(RuntimeError, match="did not return a structured date result"):
+        dategpt.get_llm_output("invalid request", client=mock_openai_client(handler))
+
+
+def test_openai_responses_boundary_rejects_malformed_structured_output():
+    def handler(request):
+        return httpx.Response(
+            200,
+            json=openai_response_payload(
+                [
+                    {
+                        "type": "output_text",
+                        "text": "not JSON",
+                        "annotations": [],
+                        "logprobs": [],
+                    }
+                ]
+            ),
+        )
+
+    with pytest.raises(ValidationError, match="Invalid JSON"):
+        dategpt.get_llm_output("tomorrow", client=mock_openai_client(handler))
+
+
+def test_openai_responses_boundary_propagates_authentication_errors():
+    def handler(request):
+        return httpx.Response(
+            401,
+            json={
+                "error": {
+                    "message": "Invalid API key",
+                    "type": "invalid_request_error",
+                    "param": None,
+                    "code": "invalid_api_key",
+                }
+            },
+        )
+
+    with pytest.raises(AuthenticationError, match="Invalid API key"):
+        dategpt.get_llm_output("tomorrow", client=mock_openai_client(handler))
